@@ -1,0 +1,863 @@
+---
+title: "Final Code- Bloody IMPACT Analysis"
+author: "Paola Fonseca"
+date: "2023-10-24"
+output: html_document
+---
+rm(list=ls()) #this clears the workspace
+graphics.off(); #close all graphics windows
+
+
+##Done Installing the IMPACT data set based on Pavia Study:
+```{r Insalling and loading data set}
+#####Load the data from the Copy_of_20161005_PHC_Data_Merge
+
+# install.packages("readxl")
+library(readxl)
+
+##Use when used laptop
+#raw_impact <- read_excel("/Users/paolafonsecaromero/Desktop/Blood_Pathogen_project/Pavia Study-impact/Copy of 20161005 PCH Data Merge.xlsx")
+#Gave me a warning of discrepancies suggesting data cleaning and handling before analysis. 
+
+#Used when using Desktop
+impact_raw <- read_excel("~/Desktop/Blood_Pathogen_project/Pavia Study-impact/Copy of 20161005 PCH Data Merge.xlsx", 
+  sheet = "Data")
+
+#impact_raw <- read_excel("C:/Users/u6030586/Box/Documents/all transfers complete/IMPACT - done done/Copy of 20161005 PCH Data Merge.xlsx", 
+#    sheet = "Data")
+
+View(impact_raw)
+```
+
+##done Creating fix data set and adding patient exclusion criterias
+```{r Created a fix data set and handeling; adding exclusion criterias (which pavia preformed in his paper)in this data set}
+library(dplyr)
+
+# Create the "fix" data frame to avoid in modifying the original data.
+fix <- impact_raw
+
+#Based on Figure.1 on the Pavia study they have exuded the following: Lost to follow up, no specimen returned and excluded before enrollment.
+#After observation on data dictionary the variable "Subjectstatus" have these response and also have the same number has the Pavia study.
+# table(impact_raw$SubjectStatus) #1157 patients were enrolled, 8patients were excluded before enrollment, 137 lost to follow up and 234 patients had no specimen returned.
+
+#Selecting the patients that have as a value "Enrolled" in the "Subjectstatus" column.
+fix <- fix %>%
+  filter(SubjectStatus == "Enrolled") #Leaving me with 1,157 patients.
+
+```
+
+##done Recode variables such as: Age group, race, ethnicity and season
+```{r Recoded variables}
+
+fix <- fix %>%
+  mutate(subjectagecat = ifelse(SUBJECTAGE < 0.5, 1, ifelse(SUBJECTAGE < 2, 2, ifelse(SUBJECTAGE < 5, 3, ifelse(SUBJECTAGE < 12, 4, 5)))) ) %>%
+  mutate(subjectagecat2 = ifelse(subjectagecat %in% c(1, 2), 1, ifelse(subjectagecat %in% c(3), 2, ifelse(subjectagecat %in% c(4, 5), 3, NA)))
+  )
+
+#subjectagecat:
+#less than 0.5, it assigns the value 1.
+# age between 0.5 and less than 2, it assigns the value 2.
+# age between 2 and less then 5, it assigns the value 3.
+# age between 5 and less than 12, it assigns the value 4.
+# age is 12 or greater, it assigns the value 5.
+
+#Subjectagecat2:
+# if subject is either 1 or 2 the corresponding age categories less then 2, it assigns the value to 1
+# if subjectage is 3 corresponding age category 2-5 it assigns the value 2
+#if subject is either 4 or 5 corresponding to age categorie 5-12 and 12+ it asaigns the value 3
+#if subject does not match any of these conditions, it asigns NA.
+
+# table(fix$subjectagecat)
+# table(fix$subjectagecat2)
+# #Mean/media calculations
+# summary(fix$subjectagecat)
+# summary(fix$subjectagecat2)
+
+#Race distribution:
+fix$RACE <- ifelse(fix$RACE == "White", 1,
+                  ifelse(fix$RACE == "Black or African American", 2, 3))
+# table(fix$RACE)
+
+#Ethnicity distribution:
+fix$ETHNICITY <- ifelse(
+ fix$ETHNICITY == "Hispanic or Latino", 1,
+  ifelse(fix$ETHNICITY == "Non-hispanic or Latino", 2,
+    3  # Default value for other cases
+  )
+)
+# table(fix$ETHNICITY)
+
+
+#Season
+#Extracting the month and year from the ONSET columns
+library(lubridate)
+fix$onset_month <- as.integer(format(fix$ONSET, "%m"))
+fix$onset_year <- as.integer(format(fix$ONSET, "%Y"))
+
+#Used if else statements to categorize the season based on onset_month
+fix$season <- ifelse(fix$onset_month %in% c(1, 2, 3), 1, #winter 261
+                     ifelse(fix$onset_month %in% c(4, 5, 6), 2, #spring 233
+                            ifelse(fix$onset_month %in% c(7, 8, 9), 3, #summer 371
+                                   ifelse(fix$onset_month %in% c(10, 11, 12), 4, NA)))) #fall 292
+# table(fix$season)
+# table(fix$onset_month) #Confirm, notice that have different distribution in season's compared with pavia's.
+
+###I used this with the fix data frame that contains all the patients after exclusion of the variables in Pavia.table1.
+
+
+
+```
+
+#done EPEC detection exclusion, fixing STEC O157 non O157
+```{r Observation of distribution and handeling of EPEC}
+
+#For C.Diff I will remove the patients younger than 2 years old + positive and remove all patients with EPEC.
+
+# #Observation of pathogen column EPEC and C.diff before changes
+# fix_na_etiology_counts <- colSums(is.na(fix)) # Pathogen columns have 196 NA's 
+# table(fix$`EPECInterpretation (D/ND)`) #In the fix data set we have 143 D, 28 NA and 790 ND
+# table(fix$`C. difficile Interpretation (D/ND)`) #In the fix data set we have 137 D and 824 ND
+
+#Remove from the fix data set the column that have EPEC.
+#I belive this approach is more effective since it removes detection of the bacteria and not the the patients, since some patients that have EPEC could have another pathogen.
+fix_no_EPEC <- fix %>%
+  select(-`EPECInterpretation (D/ND)`)
+# str(fix_no_EPEC) #EPEC column removed
+
+#Observing the distribution of the age detection within the C.diffile column.
+
+# table(fix_no_EPEC$`C. difficile Interpretation (D/ND)` , fix_no_EPEC$subjectagecat)
+#          <6 months  6-23 months       2-4 years   5-11 years    12-17 years
+#  D          19           70                 18          18           12
+#  ND        78          235                 207          208          96
+
+#There are 89 patients in the fix data set that have detection of C.diff that are younger than 2 years. I will not edit this column, I will create a new column that contains "true positives" of the patients that are  =<2 years old in this column the 89 patients will have 0. 
+fix_no_EPEC_C.diffnew <- fix_no_EPEC  %>%
+  mutate(C.diff.new = ifelse(`C. difficile Interpretation (D/ND)` == "D" & subjectagecat %in% c(3, 4, 5), 1,
+                            ifelse(`C. difficile Interpretation (D/ND)` == "D" & subjectagecat %in% c(1, 2), 0,
+                                   ifelse(`C. difficile Interpretation (D/ND)` == "ND", 0, NA))))
+#Confirming that patients that are younger than 2 years have 0 in c.diff new column
+# table(fix_no_EPEC_C.diffnew$C.diff.new, fix_no_EPEC$subjectagecat) # Shows that patients that have detection of c.diff in age group <6 months and 6-23 months are 0.
+  #     1   2   3   4   5
+  # 0  97 305 207 208  96
+  # 1   0   0  18  18  12
+
+
+###Non-0157 variable Implementation
+# table(fix_no_EPEC_C.diffnew$`E. coli O157 Interpretation (D/ND)`) #E.coli has 6 D, 933 NA and 22 ND
+# table(fix_no_EPEC_C.diffnew$`STECInterpretation (D/ND)`) #STEC has 28 D and 933 ND
+
+
+#Creating variable variable for Non-o157, based on the E.coli and STEC information.
+#per Daniel for sample size: STEC - 0157 = non0157
+fix_no_EPEC_C.diffnew_non0157 <- fix_no_EPEC_C.diffnew %>%
+  mutate(Non_O157 = ifelse(`E. coli O157 Interpretation (D/ND)` == "D" & `STECInterpretation (D/ND)` == "D", "ND",
+                     ifelse(`E. coli O157 Interpretation (D/ND)` == "ND" & `STECInterpretation (D/ND)` == "D", "D", "ND")))
+
+#Confirming that Non_0157 gave me the correct calculation
+table(fix_no_EPEC_C.diffnew_non0157$Non_O157)
+table(fix_no_EPEC_C.diffnew_non0157$C.diff.new)
+
+# temp <- as.data.frame(cbind(fix_no_EPEC_C.diffnew_non0157$`E. coli O157 Interpretation (D/ND)`,
+#                             fix_no_EPEC_C.diffnew_non0157$Non_O157,
+#                             fix_no_EPEC_C.diffnew_non0157$`STECInterpretation (D/ND)`))
+
+#NOTE TO SELF: fix_no_EPEC_C.diffnew_non0157 IS THE NEW DATASET THAT HAS CDIFF AND STECO157 FIXED
+
+
+```
+###Converting the fix_no_EPEC_C.diffnew_non0157 pathogen results to numeric 
+```{r}
+#In the pathogen columns (seen below), there are 196 NA counts, there are also variable types such as D for detection, ND for not detected and string NA (NA character in the excel file) for E.coli. 
+
+new_pathogen_columns <- c("Adenovirus F Interpretation (D/ND)", "Campylobacter Interpretation (D/ND)","C.diff.new","Cryptosporidium Interpretation (D/ND)", "C. cayetanensis Interpretation (D/ND)", "ETEC Interpretation (D/ND)", "E. coli O157 Interpretation (D/ND)", "EAECInterpretation (D/ND)", "STECInterpretation (D/ND)", "E. histolytica Interpretation (D/ND)", "G. lamblia Interpretation (D/ND)", "Astrovirus Interpretation (D/ND)", "Norovirus Interpretation (D/ND)", "P. shigelloides Interpretation (D/ND)", "Rotavirus A Interpretation (D/ND)", "Salmonella Interpretation (D/ND)", "Sapovirus Interpretation (D/ND)", "Shigella/EIEC Interpretation (D/ND)", "Vibrio Interpretation (D/ND)", "V. cholerae Interpretation (D/ND)", "Y. enterocolitica Interpretation (D/ND)", "Non_O157")
+
+#Verify na counts again
+# na_counts_per_column <- colSums(is.na(fix_no_EPEC_C.diffnew_non0157[, new_pathogen_columns]))
+# print(na_counts_per_column)
+
+#Because I have ND and NA string values in E.coli only, I will convert the NA and ND to 0, without modifying the 196 NA values.
+
+#Patients PCR responses had ND and D and E.coli had sting NA also. 
+  #only typed in NA is converted to 0, truly empty cells remain empty
+fix_clean <- fix_no_EPEC_C.diffnew_non0157 %>%
+  mutate_at(vars(all_of(new_pathogen_columns)), ~ifelse(. == "D", 1, ifelse(. %in% c("ND", "NA"), 0, .)))
+#note to self: this "NA" is a typed in NA, not a truly empty cell
+
+# View(fix_clean)
+# str(fix_clean)
+# table(is.na(fix_no_EPEC_C.diffnew_non0157$`V. cholerae Interpretation (D/ND)`))
+# table(is.na(fix_clean$`V. cholerae Interpretation (D/ND)`))
+
+#Convert the selected columns to numeric
+fix_clean_final <- fix_clean %>%
+ mutate(across(all_of(new_pathogen_columns), ~ as.numeric(.)))
+
+# View(fix_clean_final)
+# str(fix_clean_final)
+
+#Display the distribution of values in each pathogen column after converting them to numeric.
+# for (col in new_pathogen_columns) {
+#   cat("Column:", col, "\n")
+#   print(table(fix_clean_final[[col]]))
+#   cat("\n")
+# }
+
+
+# create a single column that lists all the pathogens detected
+fix_clean_final$pathogens_detected <- NA
+for (i in 1:nrow(fix_clean_final)) {
+  #get name of pathogens detected for each row
+  detected_pathogens <- colnames(fix_clean_final[new_pathogen_columns])[fix_clean_final[new_pathogen_columns][i, ] == 1]
+  fix_clean_final$pathogens_detected[i] <- paste(detected_pathogens, collapse=", ")
+
+}
+
+#Create a new columns that contains the count of detected pathogen in each row
+fix_clean_final$detected_pathogen_count <- rowSums(fix_clean_final[,new_pathogen_columns[!new_pathogen_columns %in% c("Non_O157","E. coli O157 Interpretation (D/ND)")]])
+# #Created summary table of the counts of detected pathogens.
+#excluding non_o157 and o157 from the row sum, only including STEC in the row sum since otherwise redundant
+# bloody_pathogens_final <- table(fix_blo_mPCR$detected_pathogen_count)
+# print(bloody_pathogens_final) #42 patients had 0 in their rows, 43 had 1 detection, 20 had two detentions, 5 detection three detentions and 1 had five detection.
+
+
+```
+
+###Subset used in the analysis:
+```{r}
+#Subseting patients with DIARRHEA, including w/o PCR and w/o data in blood in stool ~ 1020 patients/rows)}
+fix_Diarrhea<- fix_clean_final %>%
+  filter(DIARRHEA == "Yes") 
+
+#Subseting patients with Bloody diarrhea (with and without PCR) n = 126
+fix_bloody<- fix_clean_final %>%
+  filter(DIA_BLOODY == "Yes") 
+
+#Subsetting patients w/o bloody diarrhea (with and without PCR) n = 860
+fix_non_bloody <- fix_Diarrhea %>% 
+  filter(DIA_BLOODY != "Yes")
+
+#Subsetting patients with bloody diarrhea with PCR only single pathogen present
+blo_one_pathogen_detected <- fix_Diarrhea %>%
+  filter(DIA_BLOODY == "Yes" & detected_pathogen_count == 1)
+
+#Subsetting patients with Bloody diarrhea with PCR information n= 111
+fix_blo_mPCR <- fix_Diarrhea %>% 
+  filter(DIA_BLOODY == "Yes" & !is.na(`Shigella/EIEC Interpretation (D/ND)`))
+
+#dataset for additional wrangling for abx supplemental table
+fix_blo_abx <- fix_blo_mPCR
+
+#Subsetting patient w/o bloody diarrhea with PCR information N = 731
+fix_non_blo_mPCR <- fix_Diarrhea %>% 
+  filter(DIA_BLOODY != "Yes" & !is.na(`Shigella/EIEC Interpretation (D/ND)`))
+
+#Subsetting patients with and without bloody diarrhea who have PCR N=842
+bloody_and_non_bloody <- fix_Diarrhea %>%
+  filter(!is.na(DIA_BLOODY) & !is.na(`Shigella/EIEC Interpretation (D/ND)`))
+
+#subsetting to all patients with PCR, with bloody and non-bloody N=842
+fix_mPCR <- fix_clean_final %>%
+  filter(DIARRHEA == "Yes" & !is.na(DIA_BLOODY) & !is.na(`Shigella/EIEC Interpretation (D/ND)`))
+
+
+```
+
+
+
+```{r}
+table(is.na(fix_Diarrhea$SOCIAL_ANIMAL))
+```
+
+
+###Supplement Table.1 - All Diarrhe patients (including without PCR and wihout data on blood in stool)
+```{r Convertion of D/ND to numeric}
+
+#Selecting specific columns and created new data set
+fix_diarrhea_char<- fix_Diarrhea %>%
+  select(SEX, RACE, ETHNICITY, subjectagecat, COND_NONE, COND_IMMUNO, INSURANCE, SOCIAL_SCHOOL, SOCIAL_ANIMAL, SOCIAL_INTLTRAVEL, season)
+
+library(gtsummary)
+
+fix_diarrhea_char %>%
+  tbl_summary(
+    missing = "no"
+  )
+
+
+```
+
+#Bloody All (with and without PCR)
+```{r Subseting patients with Bloody diarrhea (including without PCR) N=126 }
+
+#Selecting specific columns and created new data set
+fix_bloody_char<- fix_bloody %>%
+  select(SEX, RACE, ETHNICITY, subjectagecat, COND_NONE, COND_IMMUNO, INSURANCE, SOCIAL_SCHOOL, SOCIAL_ANIMAL, SOCIAL_INTLTRAVEL, season)
+
+tbl_summary(fix_bloody_char)
+
+```
+
+
+#Non-Bloody All (with and without PCR)
+```{r}
+###From the 1020, I have patients that have blood diarrhea. Due to that I have to remove them.
+
+#Selecting specific columns and created new data set
+fix_nonblo_character <- fix_non_bloody%>%
+  select(SEX, RACE, ETHNICITY, subjectagecat, COND_NONE, COND_IMMUNO, INSURANCE, SOCIAL_SCHOOL, SOCIAL_ANIMAL, SOCIAL_INTLTRAVEL, season)
+
+tbl_summary(fix_nonblo_character)
+
+```
+
+#Bloody with PCR information (n=111)
+```{r Subseting patients with bloody diarrhea with PCR}
+#Created a data set with only the new pathogen,subject categories and subject ID(to merge the other patients characteristics).
+
+fix_blo_mPCR_char <- fix_blo_mPCR %>%
+  select(SEX, RACE, ETHNICITY, subjectagecat, COND_NONE, COND_IMMUNO, INSURANCE, SOCIAL_SCHOOL,
+         SOCIAL_ANIMAL,SOCIAL_INTLTRAVEL, season) 
+
+#Table
+tbl_summary(fix_blo_mPCR_char)
+
+```
+
+#Non-Bloody with PCR information (n=731)
+```{r}
+
+fix_non_blo_mPCR_char <- fix_non_blo_mPCR %>% select(SEX, RACE, ETHNICITY, subjectagecat, COND_NONE, COND_IMMUNO, INSURANCE,
+                                                     SOCIAL_SCHOOL, SOCIAL_ANIMAL,SOCIAL_INTLTRAVEL, season, SUBJECTAGE)
+
+#Table
+tbl_summary(fix_non_blo_mPCR_char)
+
+```
+
+#Mean/Media calculations of these subsets
+```{r}
+#Diarrhea all n=1020
+table(is.na(fix_Diarrhea$SUBJECTAGE)) #No missing values
+mean(fix_Diarrhea$SUBJECTAGE) #4.7
+median(fix_Diarrhea$SUBJECTAGE) #2.5
+
+# Bloody Diarrhea all n=126
+table(is.na(fix_bloody$SUBJECTAGE)) #No missing values
+mean(fix_bloody$SUBJECTAGE) #6.5
+median(fix_bloody$SUBJECTAGE) #5.31
+
+#Non-Bloody All n=860
+table(is.na(fix_non_bloody$SUBJECTAGE)) #No missing values
+mean(fix_non_bloody$SUBJECTAGE) #4.4
+median(fix_non_bloody$SUBJECTAGE) #2.2
+
+#Bloody with PCR  n=111
+table(is.na(fix_blo_mPCR$SUBJECTAGE)) #No missing values
+mean(fix_blo_mPCR$SUBJECTAGE) #6.5
+median(fix_blo_mPCR$SUBJECTAGE) #5.2
+
+#Non-Bloody with PCR n=731
+table(is.na(fix_non_blo_mPCR$SUBJECTAGE)) #No missing values
+mean(fix_non_blo_mPCR$SUBJECTAGE) #4.3
+median(fix_non_blo_mPCR$SUBJECTAGE) #2.25
+
+
+```
+
+
+#Table 1: Frequency of detection of the 21 pathogens in the PCR, among patients presenting with bloody diarrhea, stratified by age group.Co-occuring pathogens are listed multiple times.
+```{r}
+
+fix_blo_mPCR_fortable <- fix_blo_mPCR %>% select(`Adenovirus F Interpretation (D/ND)`, `Campylobacter Interpretation (D/ND)`, 
+                                                 C.diff.new, `STECInterpretation (D/ND)`,
+                                                 `Cryptosporidium Interpretation (D/ND)`, `C. cayetanensis Interpretation (D/ND)`, 
+                                                 `ETEC Interpretation (D/ND)`, `E. coli O157 Interpretation (D/ND)`, `EAECInterpretation (D/ND)`, 
+                                                 `E. histolytica Interpretation (D/ND)`, `G. lamblia Interpretation (D/ND)`, 
+                                                 `Astrovirus Interpretation (D/ND)`, `Norovirus Interpretation (D/ND)`, 
+                                                 `P. shigelloides Interpretation (D/ND)`, `Rotavirus A Interpretation (D/ND)`, 
+                                                 `Salmonella Interpretation (D/ND)`, `Sapovirus Interpretation (D/ND)`, 
+                                                 `Shigella/EIEC Interpretation (D/ND)`, `Vibrio Interpretation (D/ND)`, 
+                                                 `V. cholerae Interpretation (D/ND)`, `Y. enterocolitica Interpretation (D/ND)`, 
+                                                 Non_O157, subjectagecat)
+
+#Used the tbl.summary to create table
+tbl_summary(fix_blo_mPCR_fortable)
+
+fix_blo_mPCR_fortable %>%
+  tbl_summary(by = subjectagecat)
+```
+
+```{r}
+#Count of each pathogen in pathogen detection among the bloody diarrhea patients.
+
+#Bacteria
+
+library(dplyr)
+
+#Bacteria
+fix_bacteria_mPCR <- fix_blo_mPCR_fortable %>%
+                                           select(`Campylobacter Interpretation (D/ND)`, 
+                                                 C.diff.new, `STECInterpretation (D/ND)`,
+                                                 `Cryptosporidium Interpretation (D/ND)`, 
+                                                 `ETEC Interpretation (D/ND)`, `E. coli O157 Interpretation (D/ND)`, `EAECInterpretation (D/ND)`, 
+                                                 `P. shigelloides Interpretation (D/ND)`,
+                                                 `Salmonella Interpretation (D/ND)`, 
+                                                 `Shigella/EIEC Interpretation (D/ND)`, `Vibrio Interpretation (D/ND)`, 
+                                                 `V. cholerae Interpretation (D/ND)`, `Y. enterocolitica Interpretation (D/ND)`, 
+                                                 Non_O157) %>%
+  rowwise() %>%
+  mutate(detections = sum(c_across(everything()), na.rm = TRUE)) %>%
+  ungroup()
+  
+table(fix_bacteria_mPCR$detections)
+tbl_summary(fix_bacteria_mPCR) #We have 53 detentions on children with bloody diarrhea which has co-occurring pathogens.
+
+#Virus
+fix_virus_mPCR <- fix_blo_mPCR_fortable %>%
+                                           select(`Adenovirus F Interpretation (D/ND)`,
+                                                 `Astrovirus Interpretation (D/ND)`, `Norovirus Interpretation (D/ND)`, `Rotavirus A Interpretation (D/ND)`, `Sapovirus Interpretation (D/ND)`) %>%
+  rowwise() %>%
+  mutate(detections = sum(c_across(everything()), na.rm = TRUE)) %>%
+  ungroup()
+  
+table(fix_virus_mPCR$detections)
+tbl_summary(fix_virus_mPCR)
+
+#Protozoa
+fix_protozoa_mPCR <- fix_blo_mPCR_fortable %>%
+                                           select(`Cryptosporidium Interpretation (D/ND)`, `C. cayetanensis Interpretation (D/ND)`,
+                                                 `E. histolytica Interpretation (D/ND)`, `G. lamblia Interpretation (D/ND)`) %>%
+  rowwise() %>%
+  mutate(detections = sum(c_across(everything()), na.rm = TRUE)) %>%
+  ungroup()
+  
+table(fix_protozoa_mPCR$detections)
+tbl_summary(fix_protozoa_mPCR)
+
+#No detentions n=42 
+fix_no_detections_mPCR <- fix_blo_mPCR_fortable %>%
+  select(-subjectagecat) %>%
+ rowwise() %>%
+  mutate(detections = sum(c_across(everything()), na.rm = TRUE)) %>%
+  ungroup()
+
+table(fix_no_detections_mPCR$detections == 0)
+
+```
+
+
+#Supplement table 2. Frequency table for each of the 21 pathogens tested in the PCR panel, excluding patients with multiple pathogens.
+```{r}
+blo_one_pathogen_detected_fortable <- blo_one_pathogen_detected %>% 
+  select(`Adenovirus F Interpretation (D/ND)`, `Campylobacter Interpretation (D/ND)`, 
+                                                 C.diff.new, `STECInterpretation (D/ND)`,
+                                                 `Cryptosporidium Interpretation (D/ND)`, `C. cayetanensis Interpretation (D/ND)`, 
+                                                 `ETEC Interpretation (D/ND)`, `E. coli O157 Interpretation (D/ND)`, `EAECInterpretation (D/ND)`, 
+                                                 `E. histolytica Interpretation (D/ND)`, `G. lamblia Interpretation (D/ND)`, 
+                                                 `Astrovirus Interpretation (D/ND)`, `Norovirus Interpretation (D/ND)`, 
+                                                 `P. shigelloides Interpretation (D/ND)`, `Rotavirus A Interpretation (D/ND)`, 
+                                                 `Salmonella Interpretation (D/ND)`, `Sapovirus Interpretation (D/ND)`, 
+                                                 `Shigella/EIEC Interpretation (D/ND)`, `Vibrio Interpretation (D/ND)`, 
+                                                 `V. cholerae Interpretation (D/ND)`, `Y. enterocolitica Interpretation (D/ND)`, 
+                                                 Non_O157, subjectagecat)
+
+
+##TABLE HERE
+blo_one_pathogen_detected_fortable %>%
+  tbl_summary(by = subjectagecat)
+```
+
+```{r}
+#Total count of each pathogen in single detection among the bloody diarrhea patients.
+
+#Bacteria n=45, 41% bacteria
+table(blo_one_pathogen_detected_fortable$`Campylobacter Interpretation (D/ND)`) 
+# 0  1 
+#48  4 
+table(blo_one_pathogen_detected_fortable$C.diff.new)
+# 0  1 
+#46  6 
+table(blo_one_pathogen_detected_fortable$`ETEC Interpretation (D/ND)`)
+# 0 
+#52
+table(blo_one_pathogen_detected_fortable$`EAECInterpretation (D/ND)`)
+# 0  1 
+#50  2 
+table(blo_one_pathogen_detected_fortable$`Salmonella Interpretation (D/ND)`)
+# 0  1 
+#48  4 
+table(blo_one_pathogen_detected_fortable$`P. shigelloides Interpretation (D/ND)`)
+#0 
+#52 
+table(blo_one_pathogen_detected_fortable$`Vibrio Interpretation (D/ND)`)
+#0 
+#52
+table(blo_one_pathogen_detected_fortable$`STECInterpretation (D/ND)`)
+#0  1 
+#43  9
+table(blo_one_pathogen_detected_fortable$Non_O157)
+#0  1 
+#47  5 
+table(blo_one_pathogen_detected_fortable$`E. coli O157 Interpretation (D/ND)`)
+#0  1 
+#48  4 
+table(blo_one_pathogen_detected_fortable$`Shigella/EIEC Interpretation (D/ND)`)
+# 0  1 
+#41 11 
+table(blo_one_pathogen_detected_fortable$`Y. enterocolitica Interpretation (D/ND)`)
+#0 
+#52
+table(blo_one_pathogen_detected_fortable$`V. cholerae Interpretation (D/ND)`)
+#0 
+#52
+
+#Viruses n=14, 13% viruses
+table(blo_one_pathogen_detected_fortable$`Adenovirus F Interpretation (D/ND)`)
+# 0 
+#52
+table(blo_one_pathogen_detected_fortable$`Astrovirus Interpretation (D/ND)`)
+# 0  1 
+#50  2
+table(blo_one_pathogen_detected_fortable$`Norovirus Interpretation (D/ND)`)
+# 0  1 
+#48  4 
+table(blo_one_pathogen_detected_fortable$`Sapovirus Interpretation (D/ND)`)
+#0  1 
+#48  4 
+table(blo_one_pathogen_detected_fortable$`Rotavirus A Interpretation (D/ND)`)
+# 0  1 
+#48  4
+
+#Protozoa n=2, 2% protozoa
+table(blo_one_pathogen_detected_fortable$`G. lamblia Interpretation (D/ND)`)
+# 0  1 
+#50  2 
+table(blo_one_pathogen_detected_fortable$`Cryptosporidium Interpretation (D/ND)`)
+# 0 
+#52
+table(blo_one_pathogen_detected_fortable$`C. cayetanensis Interpretation (D/ND)`)
+#0 
+#52
+table(blo_one_pathogen_detected_fortable$`E. histolytica Interpretation (D/ND)`)
+#0 
+#52
+```
+
+
+#Data Wrangeling for abx analysis:
+```{r}
+#Paola & Sharia start over on this section together
+#these variables are asking about meds before presenting to ED
+# ANTIBIOTICS = "Did your child take any antibiotic medications (e.g., ciprofloxacin, levofloxacin, trimethoprim-sulfamethoxazole, flagyl) for this illness before coming to the hospital?"
+# ANTIBIOTICS_OTHER = "Did your child take any other medications for this illness before coming to the hospital?"
+#_LIST for both of these are listed the actual meds taken before presenting to care
+
+### Create new columns to indicate antibiotics administered during and after ED
+fix_blo_abx$Abx_start_in_ED <- NA
+fix_blo_abx$Abx_start_after_ED <- NA
+
+# Loop through each row of the dataset
+for (i in 1:nrow(fix_blo_abx)) {
+    # Create vectors to store antibiotic names for during and after ED administrations
+    abx_start_in_ed <- character()
+    abx_start_after_ed <- character()
+    
+    # Loop through each MED variable - these are the MED variables which are abx based on data dictionary
+    for (j in c(5, 6, 7, 8, 9, 10, 11, 16)) {
+        med_start <- fix_blo_abx[[paste0("MED", j, "_START")]][i]
+        med_stop <- fix_blo_abx[[paste0("MED", j, "_STOP")]][i]
+        med_name <- fix_blo_abx[[paste0("MED", j)]][i]
+        ed_discharge_date <- fix_blo_abx$DISCHARGE_ED_DATE[i]
+        
+        # Check if MED is administered and if abx started during or after ED
+        if (!is.na(med_name) && med_name == "Yes" && !is.na(med_start) ) {
+            if (med_start <= ed_discharge_date ) {
+                abx_start_in_ed <- c(abx_start_in_ed, paste0("MED", j))
+            } else if (med_start > ed_discharge_date ) {
+                abx_start_after_ed <- c(abx_start_after_ed, paste0("MED", j))
+            }
+        }
+    }
+    
+    # Assign antibiotic names to the appropriate columns
+    if (length(abx_start_in_ed) > 0) {
+        fix_blo_abx$Abx_start_in_ED[i] <- paste(abx_start_in_ed, collapse = ", ")
+    }
+    if (length(abx_start_after_ed) > 0) {
+        fix_blo_abx$Abx_start_after_ED[i] <- paste(abx_start_after_ed, collapse = ", ")
+    }
+}
+
+
+check_abx <- fix_blo_abx %>% select(SubjectID, MED5, MED5_START, MED5_STOP,
+                                    MED6, MED6_START, MED6_STOP,
+                                    MED7, MED7_START, MED7_STOP,
+                                    MED8, MED8_START, MED8_STOP,
+                                    MED9, MED9_START, MED9_STOP,
+                                    MED10, MED10_START, MED10_STOP,
+                                    MED11, MED11_START, MED11_STOP,
+                                    MED16, MED16_START, MED16_STOP,
+                                    OTHER_ANTIBIOTIC,
+                                    DISCHARGE_ED_DATE, Group,
+                                    subjectagecat,
+                                    Abx_start_in_ED, Abx_start_after_ED)
+```
+
+
+#Supplement table.3 Pathogens detected in cases of bloody diarrhea who recived antibiotics during or after ED.
+```{r}
+#Selection of specific columns
+abx_analysis_final <- fix_blo_abx %>%
+  select(SubjectID, pathogens_detected, Abx_start_in_ED, Abx_start_after_ED, subjectagecat,Group,OTHER_ANTIBIOTIC)
+
+abx_analysis_table <- abx_analysis_final %>%
+  filter(!is.na(Abx_start_in_ED) | !is.na(Abx_start_after_ED))
+View(abx_analysis_table)
+# save(abx_analysis_table, file = "C:/Users/u6030586/Box/Documents/all transfers complete/IMPACT - done done/abx_analysis_table.Rdata")
+#load(file = "C:/Users/u6030586/.../abx_analysis_table.Rdata")
+
+
+```
+
+#ODDS RATIO Table.2 Unadjusted and age group-adjusted Odds Ratio (OR) of association between the presence of pathogen and the occurence of bloody diarrhea
+
+```{r}
+#Bloody 
+table(fix$`Campylobacter Interpretation (D/ND)`)
+#  0   1 
+#103   8 
+table(fix_blo_mPCR_fortable$C.diff.new)
+ #0   1 
+#102   9
+table((fix_blo_mPCR_fortable$`ETEC Interpretation (D/ND)`))
+# 0   1 
+#107   4 
+table(fix_blo_mPCR_fortable$`EAECInterpretation (D/ND)`)
+# 0   1 
+#101  10
+table(fix_blo_mPCR_fortable$`Salmonella Interpretation (D/ND)`)
+#0   1 
+#105   6 
+table(fix_blo_mPCR_fortable$`P. shigelloides Interpretation (D/ND)`)
+ #0   1 
+#110   1 
+table(fix_blo_mPCR_fortable$`STECInterpretation (D/ND)`)
+# 0  1 
+#97 14
+table(fix_blo_mPCR_fortable$Non_O157)
+ # 0   1 
+#102   9 
+table(fix_blo_mPCR_fortable$`E. coli O157 Interpretation (D/ND)`)
+#  0   1 
+#106   5
+```
+
+
+```{r}
+non_bloody_and_bloody_paathogen <- fix_mPCR %>% 
+  select(`Adenovirus F Interpretation (D/ND)`, `Campylobacter Interpretation (D/ND)`, 
+                                                 C.diff.new, `STECInterpretation (D/ND)`,
+                                                 `Cryptosporidium Interpretation (D/ND)`, `C. cayetanensis Interpretation (D/ND)`, 
+                                                 `ETEC Interpretation (D/ND)`, `E. coli O157 Interpretation (D/ND)`, `EAECInterpretation (D/ND)`, 
+                                                 `E. histolytica Interpretation (D/ND)`, `G. lamblia Interpretation (D/ND)`, 
+                                                 `Astrovirus Interpretation (D/ND)`, `Norovirus Interpretation (D/ND)`, 
+                                                 `P. shigelloides Interpretation (D/ND)`, `Rotavirus A Interpretation (D/ND)`, 
+                                                 `Salmonella Interpretation (D/ND)`, `Sapovirus Interpretation (D/ND)`, 
+                                                 `Shigella/EIEC Interpretation (D/ND)`, `Vibrio Interpretation (D/ND)`, 
+                                                 `V. cholerae Interpretation (D/ND)`, `Y. enterocolitica Interpretation (D/ND)`, 
+                                                Non_O157, subjectagecat,DIA_BLOODY)
+
+#Table of the descriptive statistics of bloody and non-bloody in TABLE.2
+non_bloody_and_bloody_paathogen %>%
+  tbl_summary(by = DIA_BLOODY)
+
+
+```
+
+
+```{r}
+
+#Convert the outcome DIA_BLOODY to numeric
+fix_mPCR <- fix_mPCR %>%
+  mutate(DIA_BLOODY_num = ifelse(DIA_BLOODY =="Yes",1,0))
+# table(fix_mPCR$DIA_BLOODY)
+# #  No Yes 
+# # 731 111 
+# table(fix_mPCR$DIA_BLOODY2)
+# #   0   1 
+# # 731 111 
+# table(is.na(fix_mPCR$DIA_BLOODY))
+# # FALSE 
+# #   842 
+# table(is.na(fix_mPCR$DIA_BLOODY2))
+# # FALSE 
+# #   842 
+
+
+#Fit a logistic regression model using the glm package:
+
+#STEC model
+stec_model <- glm(DIA_BLOODY_num ~ `STECInterpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+exp(stec_model$coefficients)[2]
+exp(confint((stec_model)))[2,]
+#Adj model
+stec_adj <- glm(DIA_BLOODY_num ~ `STECInterpretation (D/ND)` + subjectagecat, data = fix_mPCR, family = "binomial")
+exp(stec_adj$coefficients)[2]
+exp(confint((stec_adj)))[2,]
+
+#E.coli 0157 model
+e_coli_o157_model <- glm(DIA_BLOODY_num ~ `E. coli O157 Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+exp(e_coli_o157_model$coefficients)[2]
+exp(confint((e_coli_o157_model)))[2,]
+#Adj Model
+e_coli_o157_adj <- glm(DIA_BLOODY_num ~ `E. coli O157 Interpretation (D/ND)` + subjectagecat, data = fix_mPCR, family = "binomial")
+exp(e_coli_o157_adj$coefficients)[2]
+exp(confint((e_coli_o157_adj)))[2,]
+
+#Non_O157 model
+non_o157_model <- glm(DIA_BLOODY_num ~ Non_O157, data = fix_mPCR, family = "binomial")
+exp(non_o157_model$coefficients)[2]
+exp(confint((non_o157_model)))[2,]
+#Adj model
+non_o157_adj <- glm(DIA_BLOODY_num ~ Non_O157 + subjectagecat, data = fix_mPCR, family = "binomial")
+exp(non_o157_adj$coefficients)[2]
+exp(confint((non_o157_adj)))[2,]
+
+#Campylobacter model
+campylobac_model <- glm(DIA_BLOODY_num ~ `Campylobacter Interpretation (D/ND)`, data=fix_mPCR, family= "binomial")
+exp(campylobac_model$coefficients)[2]
+exp(confint((campylobac_model)))[2,]
+#Adj model
+campylobac_adj <- glm(DIA_BLOODY_num ~ `Campylobacter Interpretation (D/ND)` + subjectagecat, data=fix_mPCR, family="binomial")
+exp(campylobac_adj$coefficients)[2]
+exp(confint((campylobac_adj)))[2,]
+
+#P. shigelloides model
+p_shigelloides_model <- glm(DIA_BLOODY_num ~ `P. shigelloides Interpretation (D/ND)`, data=fix_mPCR, family= "binomial")
+exp(p_shigelloides_model$coefficients)[2]
+exp(confint((p_shigelloides_model)))[2,]
+#Adj model
+p_shigelloides_adj <- glm(DIA_BLOODY_num ~ `P. shigelloides Interpretation (D/ND)` + subjectagecat, data=fix_mPCR, family= "binomial")
+exp(p_shigelloides_adj$coefficients)[2]
+exp(confint((p_shigelloides_adj)))[2,]
+
+#C. difficile model
+c_diff_model <- glm(DIA_BLOODY_num ~ C.diff.new, data =fix_mPCR, family = "binomial")
+exp(campylobac_adj$coefficients)[2]
+exp(confint((campylobac_adj)))[2,]
+#Aj model
+c_diff_adj <- glm(DIA_BLOODY_num ~ C.diff.new + subjectagecat, data =fix_mPCR, family = "binomial")
+exp(c_diff_adj$coefficients)[2]
+exp(confint((c_diff_adj)))[2,]
+
+#Shigella/EIEC model
+shigella_model <- glm(DIA_BLOODY_num ~ `Shigella/EIEC Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+exp(shigella_model$coefficients)[2]
+exp(confint((shigella_model)))[2,]
+#Adj model
+shigella_adj <- glm(DIA_BLOODY_num ~ `Shigella/EIEC Interpretation (D/ND)` + subjectagecat, data = fix_mPCR, family = "binomial")
+exp(shigella_adj$coefficients)[2]
+exp(confint((shigella_adj)))[2,]
+
+#EAEC model
+eaec_model <- glm(DIA_BLOODY_num ~ `EAECInterpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+exp(eaec_model$coefficients)[2]
+exp(confint((eaec_model)))[2,]
+#Adj model
+eaec_adj <- glm(DIA_BLOODY_num ~ `EAECInterpretation (D/ND)` + subjectagecat, data = fix_mPCR, family = "binomial")
+exp(eaec_adj$coefficients)[2]
+exp(confint((eaec_adj)))[2,]
+
+#Salmonella model
+salmonella_model <- glm(DIA_BLOODY_num ~ `Salmonella Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+exp(salmonella_model$coefficients)[2]
+exp(confint((salmonella_model)))[2,]
+#Adj model
+salmonella_adj <- glm(DIA_BLOODY_num ~ `Salmonella Interpretation (D/ND)` + subjectagecat , data = fix_mPCR, family = "binomial")
+exp(salmonella_adj$coefficients)[2]
+exp(confint((salmonella_adj)))[2,]
+
+
+#Rotavirus model
+rotavirus_model <- glm(DIA_BLOODY_num ~ `Rotavirus A Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+exp(rotavirus_model$coefficients)[2]
+exp(confint((rotavirus_model)))[2,]
+#Adj model
+rotavirus_adj <- glm(DIA_BLOODY_num ~ `Rotavirus A Interpretation (D/ND)` + subjectagecat, data = fix_mPCR, family = "binomial")
+exp(rotavirus_adj$coefficients)[2]
+exp(confint((rotavirus_adj)))[2,]
+
+#G.lamblia model
+g_lamblia_model <- glm(DIA_BLOODY_num ~ `G. lamblia Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+exp(g_lamblia_model$coefficients)[2]
+exp(confint((g_lamblia_model)))[2,]
+#Adj model
+g_lamblia_adj <- glm(DIA_BLOODY_num ~ `G. lamblia Interpretation (D/ND)` + subjectagecat, data = fix_mPCR, family = "binomial")
+exp(g_lamblia_adj$coefficients)[2]
+exp(confint((g_lamblia_adj)))[2,]
+
+#ETEC
+etec_model <- glm(DIA_BLOODY_num ~ `ETEC Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+exp(etec_model$coefficients)[2]
+exp(confint((etec_model)))[2,]
+#Adj model
+etec_adj <- glm(DIA_BLOODY_num ~ `ETEC Interpretation (D/ND)` + subjectagecat, data = fix_mPCR, family = "binomial")
+exp(etec_adj$coefficients)[2]
+exp(confint((etec_adj)))[2,]
+
+#Sapovirus
+sapovirus_model <- glm(DIA_BLOODY_num ~ `Sapovirus Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+exp(sapovirus_model$coefficients)[2]
+exp(confint((sapovirus_model)))[2,]
+#Adj model
+sapovirus_adj <- glm(DIA_BLOODY_num ~ `Sapovirus Interpretation (D/ND)` + subjectagecat, data = fix_mPCR, family = "binomial")
+exp(sapovirus_adj$coefficients)[2]
+exp(confint((sapovirus_adj)))[2,]
+
+#Astrovirus
+astrovirus_model <- glm(DIA_BLOODY_num ~ `Astrovirus Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+exp(astrovirus_model$coefficients)[2]
+exp(confint((astrovirus_model)))[2,]
+#Adj model
+astrovirus_adj <- glm(DIA_BLOODY_num ~ `Astrovirus Interpretation (D/ND)` + subjectagecat, data = fix_mPCR, family = "binomial")
+exp(astrovirus_adj$coefficients)[2]
+exp(confint((astrovirus_adj)))[2,]
+
+#Norovirus
+norovirus_model <- glm(DIA_BLOODY_num ~ `Norovirus Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+exp(norovirus_model$coefficients)[2]
+exp(confint((norovirus_model)))[2,]
+#Ajd model
+norovirus_adj <- glm(DIA_BLOODY_num ~ `Norovirus Interpretation (D/ND)` + subjectagecat, data = fix_mPCR, family = "binomial")
+exp(norovirus_adj$coefficients)[2]
+exp(confint((norovirus_adj)))[2,]
+
+#Adenovirus.F
+adenovirus_model <- glm(DIA_BLOODY_num ~ `Adenovirus F Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+exp(adenovirus_model$coefficients)[2]
+exp(confint((adenovirus_model)))[2,]
+
+#Cryptospridum
+cryptospridum_model <- glm(DIA_BLOODY_num ~ `Cryptosporidium Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+
+#Y. eneterocolitica
+y_enterocolitica_model <- glm(DIA_BLOODY_num ~ `Y. enterocolitica Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+
+#vibrio
+vibrio_model <- glm(DIA_BLOODY_num ~ `Vibrio Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+
+#V. cholera
+v_cholera_model <- glm(DIA_BLOODY_num ~ `V. cholerae Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+
+#E. histolytica
+e_histolytic_model <- glm(DIA_BLOODY_num ~ `E. histolytica Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+
+#C. cayetanesis
+c_cayatenesis_model <- glm(DIA_BLOODY_num ~ `C. cayetanensis Interpretation (D/ND)`, data = fix_mPCR, family = "binomial")
+
+
+#This code will fit separate logistic regression models for each etiology and print results including odd ratio and CI. Each model will focus solely on one etiology at a time, which aligns with Sharia's feedback regarding examining single models with single etiologies.
+```
+
+
